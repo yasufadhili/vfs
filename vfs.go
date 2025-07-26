@@ -2,6 +2,7 @@ package vfs
 
 import (
 	"embed"
+	"io"
 	"io/fs"
 	"path/filepath"
 
@@ -46,6 +47,9 @@ type FileSystem interface {
 	// Advanced operations
 	Clone() FileSystem
 	Merge(other FileSystem, destPath string) error
+
+	// Debug
+	Dump(writer io.Writer) error
 }
 
 // WatchableFileSystem extends FileSystem with watching capabilities

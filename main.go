@@ -2,11 +2,12 @@ package vfs
 
 import (
 	"fmt"
+	"github.com/spf13/afero"
+	"io"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
-
-	"github.com/spf13/afero"
 )
 
 // VFS represents a virtual file system with support for bundled resources and watching
@@ -429,4 +430,103 @@ func (v *VFS) SaveToDisk(srcPath, destPath string) error {
 
 		return afero.WriteFile(realFs, diskPath, content, info.Mode())
 	})
+}
+
+func (v *VFS) Dump(writer io.Writer) error {
+	// --- Dump the primary filesystem (memory or disk) ---
+	io.WriteString(writer, "--- VFS Root ---\n")
+
+	// Use a map to build a tree to sort it nicely
+	tree := make(map[string][]string)
+	err := v.Walk("/", func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == "/" { // Skip the root itself
+			return nil
+		}
+
+		parent := filepath.Dir(path)
+		if parent == "." {
+			parent = "/"
+		}
+		tree[parent] = append(tree[parent], path)
+		return nil
+	})
+
+	if err != nil {
+		// Handle cases where the root might not exist yet in an empty VFS
+		if _, ok := err.(*fs.PathError); !ok {
+			return err
+		}
+	}
+
+	printTree(writer, tree, "/", "")
+
+	// --- Dump each bundled filesystem ---
+	registeredPrefixes := v.bundledManager.ListRegistered()
+	if len(registeredPrefixes) > 0 {
+		io.WriteString(writer, "\n--- Bundled Filesystems ---\n")
+
+		for _, prefix := range registeredPrefixes {
+			io.WriteString(writer, fmt.Sprintf("Bundle [%s://]:\n", prefix))
+
+			bundleTree := make(map[string][]string)
+			bundledFS, _, ok := v.bundledManager.GetBundledFS(prefix + "://")
+			if !ok {
+				continue
+			}
+
+			// Walk the bundled filesystem starting from root
+			bundledFS.Walk("", func(path string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				// Skip the prefix part and get the clean path
+				cleanPath := strings.TrimPrefix(path, prefix+"://")
+				if cleanPath == "" || cleanPath == "." {
+					return nil
+				}
+
+				parent := filepath.Dir(cleanPath)
+				if parent == "." {
+					parent = ""
+				}
+				bundleTree[parent] = append(bundleTree[parent], cleanPath)
+				return nil
+			})
+
+			printTree(writer, bundleTree, "", "  ")
+		}
+	}
+
+	return nil
+}
+
+// printTree is a helper function to print the file tree structure recursively.
+func printTree(w io.Writer, tree map[string][]string, root, indent string) {
+	// Sort entries for a consistent order
+	entries := tree[root]
+	sort.Strings(entries)
+
+	for i, path := range entries {
+		isLast := i == len(entries)-1
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+
+		baseName := filepath.Base(path)
+		io.WriteString(w, fmt.Sprintf("%s%s%s\n", indent, connector, baseName))
+
+		// If this path is a directory (i.e., it's a key in the tree), recurse
+		if _, ok := tree[path]; ok {
+			newIndent := indent + "│   "
+			if isLast {
+				newIndent = indent + "    "
+			}
+			printTree(w, tree, path, newIndent)
+		}
+	}
 }
