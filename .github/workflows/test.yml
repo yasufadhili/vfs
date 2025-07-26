@@ -1,0 +1,46 @@
+name: Go Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Run tests
+        id: tests
+        run: |
+          go test -v -json ./... > report.json
+          cat report.json
+
+      - name: Summarise test results
+        run: |
+          jq -s 'map(select(.Action == "pass" or .Action == "fail" or .Action == "skip")) | length' report.json > total.txt
+          jq -s 'map(select(.Action == "pass")) | length' report.json > passing.txt
+          jq -s 'map(select(.Action == "fail")) | length' report.json > failing.txt
+          jq -s 'map(select(.Action == "skip")) | length' report.json > skipping.txt
+
+          echo "Total tests: $(cat total.txt)" >> $GITHUB_STEP_SUMMARY
+          echo "Passing tests: $(cat passing.txt)" >> $GITHUB_STEP_SUMMARY
+          echo "Failing tests: $(cat failing.txt)" >> $GITHUB_STEP_SUMMARY
+          echo "Skipped tests: $(cat skipping.txt)" >> $GITHUB_STEP_SUMMARY
+
+          if [ $(cat failing.txt) -gt 0 ]; then
+            echo "Failing tests:" >> $GITHUB_STEP_SUMMARY
+            jq -r 'select(.Action == "fail") | .Test' report.json >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
