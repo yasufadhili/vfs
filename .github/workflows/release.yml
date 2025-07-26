@@ -1,0 +1,55 @@
+name: Auto Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v[0-9]+.[0-9]+.*'
+  pull_request:
+    branches:
+      - main
+    types: [closed]
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    # Only run this job if the PR was merged or if it's a direct push to main
+    if: github.event.pull_request.merged == true || github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all tags and branches
+
+      - name: Get latest tag
+        id: get_latest_tag
+        run: |
+          # Get the latest tag or set it to v0.0.0 if no tags exist
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
+          
+          # Split the tag into parts
+          IFS='.' read -r major minor patch <<< "${LATEST_TAG#v}"
+          
+          # Increment the patch version
+          NEW_TAG="v$major.$minor.$((patch + 1))"
+          echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.NEW_TAG }}
+          release_name: Release ${{ env.NEW_TAG }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Automated Release ${{ env.NEW_TAG }}
+            
+            Changes in this Release:
+            ${{ github.event.head_commit.message }}
+            
+            For full changes, see the [comparison view](${{ github.event.repository.html_url }}/compare/${{ env.LATEST_TAG }}...${{ env.NEW_TAG }})
